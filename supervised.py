@@ -1,13 +1,9 @@
 from typing import Optional
-print('d')
 
 import numpy as np
-print('d')
 import pytorch_lightning as pl
-print('d')
 import torch
 import torchvision
-print('d')
 from clearml import Task
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from torch import optim
