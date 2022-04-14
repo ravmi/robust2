@@ -12,7 +12,7 @@ from clearml import Task
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from torch import optim
 
-from datasets import DenseGraspDataset, DenseGraspDataModule
+from datasets import DenseGraspDataset, DenseGraspDataModule, DenseGraspDatasetRobust, DenseGraspDatasetRobustAugmented
 
 
 class SupervisedDenseGrasp(pl.LightningModule):
@@ -110,15 +110,19 @@ def train_supervised(datamodule, model=None, **kwargs):
 
 
 if __name__ == "__main__":
-    print('0')
-    train, test = DenseGraspDataset(450, directory="grip/dense"), DenseGraspDataset(50, 450, directory="grip/dense")
-    print(train)
-    print('1')
+    #change this
+    test_on_augmented = True
+
+    ###
+
+
+    if test_on_augmented:
+        train, test = DenseGraspDatasetRobust(450, directory="robust_dense"), DenseGraspDatasetRobustAugmented(50 * 10, 4500, directory="robust_dense")
+    else:
+        train, test = DenseGraspDatasetRobust(450, directory="robust_dense"), DenseGraspDatasetRobust(50, 450, directory="robust_dense")
+
     datamodule = DenseGraspDataModule(train, test, batch_size=8)
-    print('2')
-    print(train[0])
-    task = Task.init(project_name="robustness", task_name=f"dense grasping supervised", reuse_last_task_id=False)
-    print('3')
+    task = Task.init(project_name="robustness", task_name=f"dense grasping supervised with tests on augmented data", reuse_last_task_id=False)
     train_supervised(
         datamodule,
         model=None,
@@ -129,4 +133,3 @@ if __name__ == "__main__":
         max_epochs=50,
         positive_loss_scaling=5.,
     )
-    print('4')

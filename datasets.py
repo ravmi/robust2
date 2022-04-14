@@ -79,6 +79,65 @@ class DenseGraspDataset(AbstractDenseGraspDataset):
         return self.size
 
 
+class DenseGraspDatasetRobust(AbstractDenseGraspDataset):
+    def __init__(self, size, offset=0, directory="robust", cutout=None):
+        super().__init__(directory)
+        self.transforms = torchvision.transforms.ToTensor()
+        self.size = size
+        self.offset = offset
+        self.cutout = cutout
+
+    def __getitem__(self, index):
+        index = index + self.offset
+        image = cv2.imread(f'{self.directory}/results/{index}-in.png')
+        target = cv2.imread(f'{self.directory}/results/{index}-out.png')
+        target = (target[:, :, 0] != 84).astype(np.float32)
+        mask = np.ones_like(target)
+
+        if self.cutout:
+            self.cutout.cut(image, mask)
+
+        img_tensor = self.transforms(image)
+        out_tensor = self.transforms(target)
+        mask = self.transforms(mask)
+
+        return img_tensor, out_tensor, mask
+
+    def __len__(self):
+        return self.size
+
+
+class DenseGraspDatasetRobustAugmented(AbstractDenseGraspDataset):
+    def __init__(self, size, offset=0, directory="robust", cutout=None):
+        super().__init__(directory)
+        self.transforms = torchvision.transforms.ToTensor()
+        self.size = size
+        self.offset = offset
+        self.cutout = cutout
+
+    def __getitem__(self, index):
+        index = index + self.offset
+        img_ind = index // 10
+        aug_ind = index % 10
+        image = cv2.imread(f'{self.directory}/augmented/{img_ind}-{aug_ind}-augmented.png')
+        target = cv2.imread(f'{self.directory}/results/{img_ind}-out.png')
+        target = (target[:, :, 0] != 84).astype(np.float32)
+
+        mask = np.ones_like(target)
+
+        if self.cutout:
+            self.cutout.cut(image, mask)
+
+        img_tensor = self.transforms(image)
+        out_tensor = self.transforms(target)
+        mask = self.transforms(mask)
+
+        return img_tensor, out_tensor, mask
+
+    def __len__(self):
+        return self.size
+
+
 class DenseGraspDataModule(pl.LightningDataModule):
     def __init__(self, train_dataset: AbstractDenseGraspDataset, test_dataset: AbstractDenseGraspDataset, batch_size):
         super().__init__()
@@ -167,5 +226,8 @@ if __name__ == "__main__":
                 plt.show()
                 break
 
-    train_ds = DenseGraspDataset(5, directory="grip/dense", cutout=Cutout(20, 20))
+    #train_ds = DenseGraspDatasetRobust(5, directory="/Users/rafal.michaluk/robust2/robust/", cutout=Cutout(20, 20))
+    train_ds = DenseGraspDatasetRobust(2, directory="/Users/rafal.michaluk/robust2/robust/")
+    show_dataset(train_ds)
+    train_ds = DenseGraspDatasetRobustAugmented(50, directory="/Users/rafal.michaluk/robust2/robust/")
     show_dataset(train_ds)
