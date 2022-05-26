@@ -57,9 +57,13 @@ class DenseGraspDatasetsConcat(AbstractDenseGraspDataset):
 
 
 class DenseGraspDataset(AbstractDenseGraspDataset):
-    def __init__(self, size, offset=0, directory="/scidata/grip/dense", cutout=None):
+    def __init__(self, size, offset=0, directory="/scidata/grip/dense", cutout=None, transforms=None):
         super().__init__(directory)
-        self.transforms = torchvision.transforms.ToTensor()
+        if transforms == None:
+            self.transforms = torchvision.transforms.ToTensor()
+        else:
+            self.transforms = transforms
+
         self.size = size
         self.offset = offset
         self.cutout = cutout
@@ -80,9 +84,13 @@ class DenseGraspDataset(AbstractDenseGraspDataset):
 
 
 class DenseGraspDatasetRobust(AbstractDenseGraspDataset):
-    def __init__(self, size, offset=0, directory="robust", cutout=None):
+    def __init__(self, size, offset=0, directory="robust", cutout=None, transforms=None):
         super().__init__(directory)
-        self.transforms = torchvision.transforms.ToTensor()
+        if transforms == None:
+            self.transforms = torchvision.transforms.ToTensor()
+        else:
+            self.transforms = transforms
+
         self.size = size
         self.offset = offset
         self.cutout = cutout

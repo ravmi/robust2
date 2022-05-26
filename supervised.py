@@ -7,14 +7,56 @@ import torchvision
 from clearml import Task
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from torch import optim
-
 from datasets import DenseGraspDataset, DenseGraspDataModule, DenseGraspDatasetRobust, DenseGraspDatasetRobustAugmented
+from pgd import get_adv_examples
+from steps import LinfStep, L2Step
+import torchvision.transforms as T
+
+
+
+def replace_best(loss, bloss, x, bx):
+    if bloss is None:
+        bx = x.clone().detach()
+        bloss = loss.clone().detach()
+    else:
+        replace = bloss < loss
+        bx[replace] = x[replace].clone().detach()
+        bloss[replace] = loss[replace]
+
+    return bloss, bx
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 class SupervisedDenseGrasp(pl.LightningModule):
-    def __init__(self, batch_size, lr, weight_decay, dropout, max_epochs, positive_loss_scaling=1.):
+    def __init__(self, batch_size, lr, weight_decay, dropout, max_epochs, robust, iterations, eps, step_size, step_type, positive_loss_scaling=1.):
         super().__init__()
         self.save_hyperparameters()
+        self.eps = eps
+        self.step_size = step_size#0.01
+        self.iterations = iterations
+        self.robust=robust
+        self.step_type=step_type
+
+
+        self.img_log_step = 0
+        self.bidx = 0
+
+        self.log_iter  = 0
+        #self.val_it = 0
+
 
         model = torchvision.models.segmentation.fcn_resnet50(pretrained=False)
         model.classifier[3] = torch.nn.Dropout(p=dropout)
@@ -59,26 +101,73 @@ class SupervisedDenseGrasp(pl.LightningModule):
         outputs = self.model(img)['out']
         return outputs
 
-    def step(self, batch, mode="train"):
+    def step(self, batch, mode="train", batch_idx=0):
         img, labels, mask = batch
         assert img.shape == (self.hparams.batch_size, 3, 224, 224)
         assert labels.shape == (self.hparams.batch_size, 1, 224, 224)
         assert mask.shape == (self.hparams.batch_size, 1, 224, 224)
 
         outputs = self.forward(img)
-        loss = torch.nn.BCEWithLogitsLoss(
-            weight=((labels == 0) + (labels == 1) * self.hparams.positive_loss_scaling) * mask)(outputs, labels)
+        discretized_outputs = torch.as_tensor(torch.sigmoid(outputs) > 0.5, dtype=torch.long)
+
+        #loss = torch.nn.BCEWithLogitsLoss(
+        #    weight=((labels == 0) + (labels == 1) * self.hparams.positive_loss_scaling) * mask)(outputs, labels)
+        pos_weight = torch.ones(224, 224, device=outputs.device) * 62.
+        loss = torch.BCEWithLogitsLoss(pos_weight=pos_weight)
 
         for top_n in [None, 1, 5, 10, 20]:
             self.logging(mode, batch, outputs, loss, top_n)
 
+        predimg = T.ToPILImage()(discretized_outputs[0] * 1.0)
+        pimg = T.ToPILImage()(img[0])
+        plabels = T.ToPILImage()(labels[0])
+
+        logger.report_image(mode, "image_prediction", iteration=self.log_iter, image=predimg)
+        if mode == "val":
+            logger.report_image(mode, "img", iteration=self.log_iter, image=pimg)
+        logger.report_image(mode, "labels", iteration=self.log_iter, image=plabels)
+
+        self.log_iter += 1
+
         return loss
 
     def training_step(self, batch, batch_idx):
-        return self.step(batch, mode="train")
+        # finding counterexamples here
+        img, labels, mask = batch
+
+        pimg = T.ToPILImage()(img[0])
+        plabels = T.ToPILImage()(labels[0])
+        logger.report_image("train", "img", iteration=self.log_iter, image=pimg)
+
+        if self.robust:
+            self.eval()
+
+            #img, labels, mask = batch
+            orig_input = img.clone().detach()
+            if self.step_type == "inf":
+                step = LinfStep(eps=self.eps, orig_input=orig_input, step_size=self.step_size)
+            elif self.step_type == "l2":
+                step = L2Step(eps=self.eps, orig_input=orig_input, step_size=self.step_size)
+            x_adv = get_adv_examples(self.model, img, labels, step, self.iterations, random_start=False)
+            batch = (x_adv, labels, mask)
+
+            pdifimg = (img[0] - x_adv[0]).abs()
+            self.log("mindif", pdifimg.min(), on_step=True, on_epoch=False)
+            self.log("maxdif", pdifimg.max(), on_step=True, on_epoch=False)
+            pimg = T.ToPILImage()(x_adv[0])
+            pdifimg = T.ToPILImage()(pdifimg)
+            logger.report_image("train", "image_adv", iteration=self.log_iter, image=pimg)
+            logger.report_image("train", "pdifimg", iteration=self.log_iter, image=pdifimg)
+
+            self.train()
+        #logger.report_image("image", "image_lab", iteration=batch_idx, image=plabels)
+        #img_log_step += 1
+        self.bidx = batch_idx
+        return self.step(batch, mode="train", batch_idx=batch_idx)
 
     def validation_step(self, batch, batch_idx):
-        return self.step(batch, mode="val")
+        self.bidx = batch_idx
+        return self.step(batch, mode="val", batch_idx=batch_idx)
 
 
 def train_supervised(datamodule, model=None, **kwargs):
@@ -107,18 +196,30 @@ def train_supervised(datamodule, model=None, **kwargs):
 
 if __name__ == "__main__":
     #change this
-    test_on_augmented = True
+    test_on_augmented = True#False#True
+    robust = True#False#True
+    iterations = 30
+    #eps = 0.05
+    eps = 50.
+    step_size = 0.01
+    step_type="l2"
+
+    task_name = f"augmented: {test_on_augmented}, robust: {robust}, steps: {iterations}, eps: {eps} step_size: {step_size}, step_type: {step_type}"
 
     ###
 
 
     if test_on_augmented:
         train, test = DenseGraspDatasetRobust(450, directory="robust_dense"), DenseGraspDatasetRobustAugmented(50 * 10, 4500, directory="robust_dense")
+        datamodule = DenseGraspDataModule(train, test, batch_size=8)
+        task = Task.init(project_name="robustness", task_name=task_name, reuse_last_task_id=False)
     else:
         train, test = DenseGraspDatasetRobust(450, directory="robust_dense"), DenseGraspDatasetRobust(50, 450, directory="robust_dense")
+        datamodule = DenseGraspDataModule(train, test, batch_size=8)
+        task = Task.init(project_name="robustness", task_name=task_name, reuse_last_task_id=False)
+    logger = task.get_logger()
+    img_log_step = 0
 
-    datamodule = DenseGraspDataModule(train, test, batch_size=8)
-    task = Task.init(project_name="robustness", task_name=f"dense grasping supervised with tests on augmented data", reuse_last_task_id=False)
     train_supervised(
         datamodule,
         model=None,
@@ -126,6 +227,10 @@ if __name__ == "__main__":
         lr=1e-3,
         dropout=0.01,
         weight_decay=0.01,
-        max_epochs=50,
-        positive_loss_scaling=5.,
+        max_epochs=90,
+        robust=robust,
+        iterations=iterations,
+        eps=eps,
+        step_size=step_size,
+        step_type=step_type
     )
