@@ -14,10 +14,11 @@ import torchvision.transforms as T
 import random
 import yaml
 from deepaug import DeepAug
+import sys
 
 
 class SupervisedDenseGrasp(pl.LightningModule):
-    def __init__(self, batch_size, lr, weight_decay, dropout, max_epochs, robust, iterations, eps, step_size, step_type, use_deepaug, positive_loss_scaling=1.):
+    def __init__(self, batch_size, lr, weight_decay, dropout, max_epochs, robust, iterations, eps, step_size, step_type, use_deepaug, deepaug_args, deepaug_model,  positive_loss_scaling=1.):
         super().__init__()
         self.save_hyperparameters()
         self.eps = eps
@@ -27,7 +28,8 @@ class SupervisedDenseGrasp(pl.LightningModule):
         self.step_type=step_type
         self.use_deepaug = use_deepaug
         if self.use_deepaug:
-            self.deepaug = DeepAug()
+            self.deepaug = DeepAug("imagenet")
+            self.deepaug_args = deepaug_args
 
 
         self.img_log_step = 0
@@ -69,6 +71,9 @@ class SupervisedDenseGrasp(pl.LightningModule):
             self.trainer.val_dataloaders[0].dataset))
         self.log(naming("acc"), (torch.sum(discretized_outputs == labels) / np.prod(labels.shape)).item(), on_step=True,
                  on_epoch=True)
+
+        self.log(naming("acc_positive"), ((discretized_outputs == 1).logical_and(discretized_outputs == labels).sum() / np.prod(labels.shape)).item(), on_step=True,on_epoch=True)
+
         if torch.sum(labels == 1).item() > 0:
             self.log(naming("recall"), (torch.sum(torch.logical_and(discretized_outputs == 1, labels == 1)) / torch.sum(
                 labels == 1)).item(), on_step=True, on_epoch=True)
@@ -115,9 +120,9 @@ class SupervisedDenseGrasp(pl.LightningModule):
         # finding counterexamples here
         img, labels, mask = batch
 
-        if self.use_deepaug and random.random() < 0.6:
-            img = self.deepaug(img)
-        if batch_idx in [0, 1, 2]:
+        if self.use_deepaug and random.random() < 0.5:
+            img = self.deepaug(img, **deepaug_args)
+        if batch_idx in range(8):
             tensorboard = self.logger.experiment
             tensorboard.add_image(f"train_{batch_idx}_image", img[0], self.current_epoch)
 
@@ -180,6 +185,10 @@ def train_supervised(train_loaders, val_loaders, model=None, **kwargs):
 
 
 if __name__ == "__main__":
+    if(len(sys.argv) == 1):
+        task_name = "grip_dense"
+    else:
+        task_name = sys.argv[1]
     # hyperparameters (change this if you need)
     # robust
     robust = False
@@ -188,12 +197,17 @@ if __name__ == "__main__":
     step_size = 0.01
     step_type = "l2"
 
+    #deepaug
+    use_deepaug = True
+    deepaug_model = 'imagenet'
+    deepaug_args = {'w': None, 'f': None}
+
     # other
     batch_size = 8
-    task_name = "grip_dense"
     dataset_path = "/home/rm360179/datasets/grasping_dataset"
-    use_deepaug = True
 
+
+    print(task_name)
     task = Task.init(project_name="robustness", task_name=task_name, reuse_last_task_id=False)
 
     train = DenseGraspDatasetRobust(450, directory=dataset_path)
@@ -218,5 +232,7 @@ if __name__ == "__main__":
         eps=eps,
         step_size=step_size,
         step_type=step_type,
-        use_deepaug=use_deepaug
+        use_deepaug=use_deepaug,
+        deepaug_model=deepaug_model,
+        deepaug_args=deepaug_args
     )
