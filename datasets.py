@@ -13,6 +13,8 @@ from torch.utils.data import Dataset
 import pytorch_lightning as pl
 import matplotlib.pyplot as plt
 
+def fix_channels(img):
+    return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
 class AbstractDenseGraspDataset(abc.ABC, Dataset):
     def __init__(self, directory="/scidata/grip/dense"):
@@ -22,6 +24,11 @@ class AbstractDenseGraspDataset(abc.ABC, Dataset):
         index += 100   # numbering starts at 100
         image = cv2.imread(f'{self.directory}/one_side_try{index}/original.png')
         target = cv2.imread(f'{self.directory}/one_side_try{index}/result-0.png')
+
+
+        image = fix_channels(image)
+
+
         target = (target[:, :, 0] != 84).astype(np.float32)
         return image, target
 
@@ -98,6 +105,7 @@ class DenseGraspDatasetRobust(AbstractDenseGraspDataset):
     def __getitem__(self, index):
         index = index + self.offset
         image = cv2.imread(f'{self.directory}/results/{index}-in.png')
+        image = fix_channels(image)
         target = cv2.imread(f'{self.directory}/results/{index}-out.png')
         target = (target[:, :, 0] != 84).astype(np.float32)
         mask = np.ones_like(target)
@@ -128,6 +136,7 @@ class DenseGraspDatasetRobustAugmented(AbstractDenseGraspDataset):
         img_ind = index // 10
         aug_ind = index % 10
         image = cv2.imread(f'{self.directory}/augmented/{img_ind}-{aug_ind}-augmented.png')
+        image = fix_channels(image)
         target = cv2.imread(f'{self.directory}/results/{img_ind}-out.png')
         target = (target[:, :, 0] != 84).astype(np.float32)
 
