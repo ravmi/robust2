@@ -200,7 +200,7 @@ if __name__ == "__main__":
     #deepaug
     use_deepaug = True
     deepaug_model = 'imagenet'
-    deepaug_args = {'w': None, 'f': None}
+    deepaug_args = {'w': 0, 'f': None}
 
     # other
     batch_size = 8
@@ -236,3 +236,4 @@ if __name__ == "__main__":
         deepaug_model=deepaug_model,
         deepaug_args=deepaug_args
     )
+    task.close()
